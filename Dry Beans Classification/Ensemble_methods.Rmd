@@ -1,0 +1,536 @@
+---
+title: "Assignment3"
+author: "Jay"
+date: "5/6/2022"
+output: word_document
+---
+
+```{r}
+library(caTools)
+library("readxl")
+library("parallel")
+library(dplyr)
+library(caTools)
+library(caret)
+library(pROC)
+library(ROCit)
+library(rpart)
+library(rpart.plot)
+library(Rborist)
+library(class)
+library(glmnet)
+library(kernlab)
+library(nnet)
+library(randomForest)
+library(naivebayes)
+library(psych)
+library(e1071)
+library(party)
+library(mlbench)
+library(klaR)
+library(psych)
+library(MASS)
+library(devtools)
+library(ipred)
+library(Metrics, include.only = 'bias')
+library(adabag)
+library(doParallel)
+#install.packages("xgboost")
+library(xgboost)
+
+```
+
+
+```{r}
+data <- read_excel("Dry_Bean_Dataset.xlsx")
+data
+data= data[sample(1:nrow(data)), ]
+summary(data)
+
+data<- data[,-1]
+head(data)
+data$Class <- as.factor(data$Class)
+set.seed(69)
+
+data<- data[,-1]
+set.seed(123)
+ind <- sample(2, nrow(data),
+              replace = TRUE,
+              prob = c(0.75, 0.25))
+training <- data[ind==1,]
+testing <- data[ind==2,]
+
+ind1 <- sample(2, nrow(data),
+              replace = TRUE,
+              prob = c(0.60, 0.40))
+training2 <- data[ind1==1,]
+testing2 <- data[ind1==2,]
+
+
+```
+
+
+## Random Forest ##
+
+
+Random Forest is an ensemble learning method for classification, regression and other tasks that operates by constructing a multitude of decision trees at training time. This algorithm is implemented in parallel by using the doParallel library. We create clusters by detecting the number of cores in the CPU and create one less cluster than the number of cores. The random forest model is created by using the randomForest() function from the randomForest library.
+
+Comparing the random forest model to the decision tree model in assignment 2, we can notice that the random forest outperforms the decision tree model. Decision tree model results in 87% for both phases whereas the random forest model obtains the results of 99% and 92%. This is because Random Forest algorithm also incorporates randomness when building individual trees in two distinct ways, bagging and random selection of features, none of which is present in the simple Decision Tree algorithm.
+
+We create 2 models in the code below. One model with ntree value =25 the other with 100 trees and compare them. They created using the same dataset of the 75:25 split. Tables for each prediction are generated.
+
+```{r}
+no_cores <- detectCores() - 1  
+registerDoParallel(cores=no_cores)  
+cl <- makeCluster(no_cores, type="FORK")  
+registerDoParallel(cl)
+
+set.seed(12)
+rf_model = randomForest(Class~., data = training, ntree = 25)
+rf_model100 = randomForest(Class~., data = training, ntree = 100)
+rf_train100 <- (predict(rf_model100, training, type = 'response'))
+rf_test100 <- (predict(rf_model100, testing, type = 'response'))
+
+rf_train <- (predict(rf_model, training, type = 'response'))
+
+rf_train_tab <- table(Predicted = rf_train, Actual = training$Class)
+rf_test <- (predict(rf_model, testing, type = 'response'))
+rf_test_tab <- table(Predicted = rf_test, Actual = testing$Class)
+
+
+
+```
+
+The precision of each class as shown below is above 99% in each training class and above 90% in each testing class. The model identifies very few Fasle Positives and generally on this dataset gives better results than the techniques used in assignment 2.
+
+```{r}
+rf_train_pre <- diag(rf_train_tab)/rowSums(rf_train_tab)
+print('PRECISION FOR EACH CLASS IN TRAINING SET')
+rf_train_pre
+mean(rf_train_pre)
+rf_test_pre <- diag(rf_test_tab)/rowSums(rf_test_tab)
+print('PRECISION FOR EACH CLASS IN TESTING SET')
+rf_test_pre
+mean(rf_test_pre)
+```
+
+The accuracy of the training set is 99% which is great for the model. Even the Kapppa value for the test set is at 99% which means the model doesn't have many False Positives. So far random forest has been the best model for the training set as it gives almost perfect accuracy and the most kappa value. The accuracy for the generalization set is 92% which is not as good as the learning phase but it does identify the class 'BOMBAY' perfectly and classes 'HOROZ' and 'CALI' also have accuracy greater than 98% which makes this model a great identifier for these classes.The drop in accuracy between the two phases is not larger than 25% we can say that the model is not overfitting.
+
+```{r}
+confusionMatrix(rf_train, training$Class)
+confusionMatrix(rf_test, testing$Class)
+
+rf_tr_cm <- confusionMatrix(rf_train, training$Class)
+rf_tst_cm <- confusionMatrix(rf_test, testing$Class)
+```
+
+We observe the changes in learning phase where ntree = 100. The accuracy of the learning phase is 100% and that of generalization phase is 92%. The difference in accuracies of the two models ntree =25 and ntree = 100 does not differ greatly. Rather the accuracies only have a difference of a decimal place. So we can conclude that the model with 25 ntree's is relatively better for this classification since rf_tree100 takes significantly more computational time and space. 
+
+```{r}
+confusionMatrix(rf_train100, training$Class)
+confusionMatrix(rf_test100, testing$Class)
+```
+
+
+```{r}
+print(paste('BIAS FOR TRAINING SET = ',bias(as.numeric(rf_train),as.numeric(training$Class))))
+print(paste('BIAS FOR TESTING SET = ',bias(as.numeric(rf_test),as.numeric(testing$Class))))
+```
+
+The ROC plot for sensitivity vs specificity for each Class is generated. We can observe that all plots are almost at 100%. This is due to the specificity and sensitivity of each class being 100%.  
+
+We compute the ROC curve and calculate its AUC for the Random Forest Model in the code below:
+
+```{r}
+rf.roc_train <- multiclass.roc(training$Class, as.ordered(rf_train))
+
+
+rf_rs_train <- rf.roc_train[['rocs']]
+plot.roc(main = '7 One vs One ROC Plot for learning  phase',rf_rs_train[[1]], lty=4)
+sapply(2:7,function(i) lines.roc(rf_rs_train[[i]],col=i, lty=i))
+
+rf_train_auc <- (sapply(1:7,function(i) auc(rf_rs_train[[i]])))
+legend("bottom", legend=c('1/2','1/3','1/4','1/5','1/6','1/7', '1/8'), col=1:7,
+       lwd=2)
+legend("right", legend=c('auc = ', format(round(mean(rf_train_auc), 3), nsmall = 2)))
+```
+The ROC curve for the generalization phase is generated below. Even though this curve has an AUC value lower than the svm generalization phase, it still outperforms rest of the models in assignment 2. 
+
+```{r}
+rf.roc <- multiclass.roc(testing$Class, as.ordered(rf_test))
+rf_rs <- rf.roc[['rocs']]
+plot.roc(main = '7 One vs One ROC Plot for Generalization phase', rf_rs[[1]], lty=4)
+
+sapply(2:7,function(i) lines.roc(rf_rs[[i]],col=i, lty=i))
+rf_test_auc <- (sapply(1:7,function(i) auc(rf_rs[[i]])))
+legend("bottom", legend=c('1/2','1/3','1/4','1/5','1/6','1/7', '1/8'), col=1:7,
+       lwd=2)
+legend("right", legend=c('auc = ', format(round(mean(rf_test_auc), 3), nsmall = 2)))
+
+
+```
+
+We create a Random Forest model for th 60:40 data. The accuracies of this model is almost the same as our default dataset. Even their kappa values are almost similar. And it also outperforms the Decsion Tree in assignment 2. This proves that for this particular dataset the split ratio had little to effect on the accuracy of the model.
+
+```{r}
+set.seed(13)
+rf_model2 = randomForest(Class~., data = training2, ntree = 25)
+rf_train2 <- (predict(rf_model2, training2, type = 'response'))
+
+rf_train_tab2 <- table(Predicted = rf_train2, Actual = training2$Class)
+
+rf2_tr_acc <- sum(diag(rf_train_tab2))/sum(rf_train_tab2)
+
+rf_test2 <- (predict(rf_model2, testing2, type = 'response'))
+rf_test_tab2 <- table(Predicted = rf_test2, Actual = testing2$Class)
+rf2_tst_acc <- sum(diag(rf_test_tab2))/sum(rf_test_tab2)
+
+confusionMatrix(rf_train2, training2$Class)
+confusionMatrix(rf_test2, testing2$Class)
+```
+
+
+The difference in variance between both models is very low and therefore we can conclude that the model created in 75:25 split is almost the same as 60:40 split.
+
+```{r}
+print(paste('Variance on the Training Dataset = ',rf_tr_cm$overall['Accuracy'] - rf2_tr_acc))
+print(paste('Variance on the Testing Dataset = ',rf_tst_cm$overall['Accuracy'] - rf2_tst_acc))
+
+stopCluster(cl)
+```
+
+
+## BAGGING ##
+
+The ensemble bagging technique is performed in parallel since it takes
+We apply 25 nabggs to control the number of decision trees voting in the ensemble. We can improve the accuracy of our model by increasing the number of nbaggs but it leads to higher computation and more time. 
+
+I also applied the nbagg value of 100 to see the results of the model. The learning phase accuracy was 100% and the generalization phase accuracy was 92.42.
+
+The learning phase accuracy for the model where nbagg = 25 is 99.9%. The generalization phase accuracy is 92.45%. It is lower than the learning phase accuracy. This can be due to the reason that only a single decision tree is built in bagging. But in this case the difference is not enough to justify this model as a ‘bad’ model. As we can see from the difference between using different nbagg values, we can observe that the difference is not significant. The learning phase of nbagg = 100 only outperforms nbagg =25 by 0.1% and the generalization phase is lower by 0.03%. Therefore, the difference of nbaggs does not affect our model greatly.
+
+
+The bagging model takes large amount of time to process and that is why we execute the model using the doParallel funtion. Even after the model is executed in parallel it still takes up a lot of time to execute. 
+
+
+```{r}
+
+no_cores <- detectCores() - 1  
+registerDoParallel(cores=no_cores)  
+cl <- makeCluster(no_cores, type="FORK")  
+registerDoParallel(cl)
+
+cvcontrol <- trainControl(method='cv', number=5, allowParallel=TRUE)
+
+set.seed(1234)
+bagg_model <- train(Class~., data=training, method="treebag", trControl=cvcontrol, nbagg = 25)
+
+set.seed(14)
+bagg_model100 <- train(Class~., data=training, method="treebag", trControl=cvcontrol, nbagg = 100)
+
+bagg_model_train <- predict(bagg_model, training)
+bagg_model_test <- predict(bagg_model, testing)
+bagg_tst_table <- table(Predicted =bagg_model_test, Actual = testing$Class)
+bagg_tr_table <- table(Predicted = bagg_model_train, Actual = training$Class)
+
+
+```
+
+The model shows a precision greater than 99% for the learning phase and above 90% for all but 'SIRA' class in the generalization phase. Overall this ensemble technique outperforms any classifier that I have used in assignment 2. 
+
+```{r}
+bagg_tr_pre <- diag(bagg_tr_table)/rowSums(bagg_tr_table)
+print('PRECISION FOR EACH CLASS IN TRAINING SET')
+bagg_tr_pre
+mean(bagg_tr_pre)
+
+bagg_tst_pre <- diag(bagg_tst_table)/rowSums(bagg_tst_table)
+print('PRECISION FOR EACH CLASS IN TESTING SET')
+bagg_tst_pre
+mean(bagg_tst_pre)
+```
+
+```{r}
+print('')
+```
+
+The confusion matrix for the bagg=25 model is created below. The kappa values are 99% and 90% respectively suggesting there are very few False Positives in the prediction models. The specificity for each model is atleast 99% and 90% and sensitivity is 99% and 87%. Only SVM outperforms this model by 0.8% which is not a huge difference in this data. Because SVM performs well in high dimensional spaces it is able to outperform both random forest and bagging ensemble techniques.
+
+
+```{r}
+confusionMatrix(bagg_model_train, training$Class)
+confusionMatrix(bagg_model_test, testing$Class)
+
+bagg_tr_cm <- confusionMatrix(bagg_model_train, as.factor(training$Class))
+bagg_tst_cm <- confusionMatrix(bagg_model_test, testing$Class)
+```
+
+The low bias can be interpreted as the model incorporating fewer assumptions about the target function.
+
+```{r}
+print(paste('BIAS FOR TRAINING SET = ',bias(as.numeric(bagg_model_train),as.numeric(training$Class))))
+print(paste('BIAS FOR TESTING SET = ',bias(as.numeric(bagg_model_test),as.numeric(testing$Class))))
+```
+
+
+
+```{r}
+bagg_train.roc <- multiclass.roc(training$Class, as.ordered(bagg_model_train))
+bagg_tr_rs <- bagg_train.roc[['rocs']]
+plot.roc(main = '7 One vs One ROC Plot for Learning phase', bagg_tr_rs[[1]], lty=4)
+sapply(2:7,function(i) lines.roc(bagg_tr_rs[[i]],col=i, lty=i))
+bagg_tr_auc <- (sapply(1:7,function(i) auc(bagg_tr_rs[[i]])))
+legend("bottom", legend=c('1/2','1/3','1/4','1/5','1/6','1/7', '1/8'), col=1:7,
+       lwd=2)
+legend("right", legend=c('auc = ',format(round(mean(bagg_tr_auc), 4), nsmall = 2)))
+
+```
+
+
+```{r}
+
+bagg_test.roc <- multiclass.roc(testing$Class, as.ordered(bagg_model_test))
+bagg_tst_rs <- bagg_test.roc[['rocs']]
+plot.roc(main = '7 One vs One ROC Plot for Generalization phase' ,bagg_tst_rs[[1]], lty=4)
+
+sapply(2:7,function(i) lines.roc(bagg_tst_rs[[i]],col=i, lty=i))
+bagg_tst_auc <- (sapply(1:7,function(i) auc(bagg_tst_rs[[i]])))
+legend("bottom", legend=c('1/2','1/3','1/4','1/5','1/6','1/7', '1/8'), col=1:7,
+       lwd=2)
+legend("right", legend=c('auc = ',format(round(mean(bagg_tst_auc), 4), nsmall = 2)))
+```
+
+
+```{r}
+
+set.seed(15)
+bagg_model2 <- train(Class~., data=training2, method="treebag", trControl=cvcontrol, nbagg = 25)
+
+bagg_model_train2 <- predict(bagg_model2, training2)
+bagg_model_test2 <- predict(bagg_model2, testing2)
+bagg_tst_table2 <- table(Predicted =bagg_model_test, Actual = testing$Class)
+bagg_tr_table2 <- table(Predicted = bagg_model_train, Actual = training$Class)
+bagg2_tr_acc <- sum(diag(bagg_tr_table2))/sum(bagg_tr_table2)
+bagg2_tst_acc <- sum(diag(bagg_tst_table2))/sum(bagg_tst_table2)
+```
+
+The confusion matrix for the 60:40 split is generated below. The accuracy in the learning phase is identical to the 75:25 split data. There is a difference of 0.2% in the generalization phase, but in the data as big as this one, it is not significant. The model averaging approach of bagging helps model in learning in an uncharacteristic split of data. 
+
+
+```{r}
+confusionMatrix(bagg_model_train2, training2$Class)
+confusionMatrix(bagg_model_test2, testing2$Class)
+```
+
+The model shows no variance between the two models of different splits. Bagging's main function is to deal with bias-variance trade-offs and reduces the variance of a prediction model. This is clearly accomplished by the model as we can see that there is no variance between the two models.
+
+```{r}
+print(paste('Variance on the Training Dataset = ',bagg_tr_cm$overall['Accuracy'] - bagg2_tr_acc))
+print(paste('Variance on the Testing Dataset = ',bagg_tst_cm$overall['Accuracy'] - bagg2_tst_acc))
+
+stopCluster(cl)
+```
+
+## Boosting ##
+
+Boosting is another famous ensemble learning technique in which we are not concerned with reducing the variance of learners like in Bagging where our aim is to reduce the high variance of learners by averaging lots of models fitted on bootstrapped data samples generated with replacement from training data, so as to avoid overfitting. Boosting is specifically aimed at weak learners. In Boosting each tree or Model is grown or trained using the hard examples. A decsion tree is a weak learner, so comparing the boosting model to a decision tree model is ideal. 
+
+We import the boosting function from the xgboost library. We convert the training data and the testing data into a matrix and create a function for parameters to use in the model and create a model to train the xgb_model. 
+
+```{r}
+
+
+set.seed(16)
+xgb_train <- xgb.DMatrix(data = as.matrix(training[1:14]), label = as.integer(training$Class)-1)
+
+xgb_test <- xgb.DMatrix(data = as.matrix(testing[1:14]), label = as.integer(testing$Class)-1)
+
+xgb_params <- list(
+  booster = "gbtree",
+  eta = 0.01,
+  max_depth = 8,
+  gamma = 4,
+  subsample = 0.75,
+  colsample_bytree = 1,
+  objective = "multi:softprob",
+  eval_metric = "mlogloss",
+  num_class = length(levels(training$Class))
+)
+
+xgb_model <- xgb.train(
+  params = xgb_params,
+  data = xgb_train,
+  nrounds = 5000,
+  verbose = 1
+)
+
+```
+
+After creating the model we predict the model on the training and testing datasets. 
+
+```{r}
+xgb_train <- predict(xgb_model, as.matrix(training[1:14]), reshape = TRUE)
+xgb_train <- as.data.frame(xgb_train)
+colnames(xgb_train) <- levels(training$Class)
+
+xgb_train$PredictedClass <- apply(xgb_train, 1, function(y) colnames(xgb_train)[which.max(y)])
+xgb_train$ActualClass <- levels(training$Class)[training$Class]
+
+```
+
+
+```{r}
+
+
+xgb_test <- predict(xgb_model, as.matrix(testing[1:14]), reshape = TRUE)
+xgb_test <- as.data.frame(xgb_test)
+colnames(xgb_test) <- levels(testing$Class)
+xgb_test
+
+xgb_test$PredictedClass <- apply(xgb_test, 1, function(y) colnames(xgb_test)[which.max(y)])
+xgb_test$ActualClass <- levels(testing$Class)[testing$Class]
+xgb_test
+
+```
+
+After predicting the models, we obtain the accuracies for the learning and generalization phase. The accuracies are 95% and 92% which are very good but compared to random forest and bagging technique it is relatively lower. Since the accuracy difference between the two phases is not greater than 15%, we can assume that the model is a good fit.
+Though the difference is not significant. The model still outperforms the classifiers from assignment 2 except for the accuracy of generalization phase of svm. It only differs by 0.6% which is not significant. The kappa values are both greater than 90% siginifying that in this huge dataset there are very few False Positives. Both sets provide a better accuracy than the decision tree model of assignment 2. 
+
+```{r}
+
+confusionMatrix(factor(xgb_train$ActualClass), factor(xgb_train$PredictedClass))
+confusionMatrix(factor(xgb_test$ActualClass), factor(xgb_test$PredictedClass))
+
+xgb_tr_cm <- confusionMatrix(factor(xgb_train$ActualClass), factor(xgb_train$PredictedClass))
+xgb_tst_cm <- confusionMatrix(factor(xgb_test$ActualClass), factor(xgb_test$PredictedClass))
+
+```
+
+The bias of the learning and generalization phase is generated below. We can see that there is a negative sign in the bias.This indicates that the model is underfitting. However, the absolute value is only 0.003 and 0.02 which means that the model incorporates fewer assumptions about the target function i.e. Class in this instance. The bias of the model when compared to decision tree model, we can observe that the bias in DT was 0.03 and 0.04 whereas for Boosting model is relatively lower and it is also underfitting and not overfitting as there is positive sign in DT and negative sign in Boosting.
+
+```{r}
+
+print(paste('BIAS FOR TRAINING SET = ',bias(as.numeric(factor(xgb_train$ActualClass)),as.numeric(factor(xgb_train$PredictedClass)))))
+print(paste('BIAS FOR TESTING SET = ',bias(as.numeric(factor(xgb_test$ActualClass)),as.numeric(factor(xgb_test$PredictedClass)))))
+```
+
+The ROC curve for the learning phase is generated below. The computed AUC for the 7 graphs dispayed below is 0.97. It means that our model's overall sensitivity and specificity are very good.
+
+```{r}
+
+xgb_tr.roc <-multiclass.roc(as.ordered(xgb_train$PredictedClass), as.ordered(xgb_train$ActualClass))
+xgb_tr_rs <- xgb_tr.roc[['rocs']]
+plot.roc(main = '7 One vs One ROC Plot for Learning phase',xgb_tr_rs[[1]], lty=4)
+
+sapply(2:7,function(i) lines.roc(xgb_tr_rs[[i]],col=i, lty=i))
+xgb_tr_auc <- (sapply(1:7,function(i) auc(xgb_tr_rs[[i]])))
+legend("bottom", legend=c('1/2','1/3','1/4','1/5','1/6','1/7', '1/8'), col=1:7,
+       lwd=2)
+legend("right", legend=c('auc = ',format(round(mean(xgb_tr_auc), 4), nsmall = 2)))
+
+```
+
+The ROC curve for the generalization phase is generated below. The computed AUC for the 7 graphs displayed below is 0.97 which is identical to the AUC computed in the learning phase. The model's overall sensitivity and specificity are near perfect and there are very few FP and FN's in the predicted models.
+
+```{r}
+
+accuracy_test <- sum(xgb_test$PredictedClass == xgb_test$ActualClass) / nrow(xgb_test)
+accuracy_test
+
+xgb_tst.roc <-multiclass.roc(as.ordered(xgb_test$PredictedClass), as.ordered(xgb_test$ActualClass))
+xgb_tst_rs <- xgb_tst.roc[['rocs']]
+plot.roc(main = '7 One vs One ROC Plot for Generalization phase',xgb_tst_rs[[1]], lty=4)
+
+sapply(2:7,function(i) lines.roc(xgb_tst_rs[[i]],col=i, lty=i))
+xgb_tst_auc <- (sapply(1:7,function(i) auc(xgb_tst_rs[[i]])))
+legend("bottom", legend=c('1/2','1/3','1/4','1/5','1/6','1/7', '1/8'), col=1:7,
+       lwd=2)
+legend("right", legend=c('auc = ',format(round(mean(xgb_tst_auc), 4), nsmall = 2)))
+```
+
+The confusion matrix for the 60:40 split is generated below. The accuracy difference in the learning phase 0.8% and the accuracy in the generalization phase is identical to the 75:25 split data. There is a difference of 0.15% in the generalization phase, but in the data as big as this one, it is not significant. 
+
+
+
+```{r}
+
+set.seed(17)
+xgb_train2 <- xgb.DMatrix(data = as.matrix(training2[1:14]), label = as.integer(training2$Class)-1)
+
+xgb_test2 <- xgb.DMatrix(data = as.matrix(testing2[1:14]), label = as.integer(testing2$Class)-1)
+
+xgb_params2 <- list(
+  booster = "gbtree",
+  eta = 0.01,
+  max_depth = 8,
+  gamma = 4,
+  subsample = 0.75,
+  colsample_bytree = 1,
+  objective = "multi:softprob",
+  eval_metric = "mlogloss",
+  num_class = length(levels(training$Class))
+)
+
+xgb_model2 <- xgb.train(
+  params = xgb_params2,
+  data = xgb_train2,
+  nrounds = 5000,
+  verbose = 1
+)
+
+```
+
+```{r}
+xgb_train2 <- predict(xgb_model, as.matrix(training2[1:14]), reshape = TRUE)
+xgb_train2 <- as.data.frame(xgb_train2)
+colnames(xgb_train2) <- levels(training2$Class)
+
+xgb_train2$PredictedClass <- apply(xgb_train2, 1, function(y) colnames(xgb_train2)[which.max(y)])
+xgb_train2$ActualClass <- levels(training2$Class)[training2$Class]
+
+
+xgb2_tr_acc <- sum(xgb_train2$PredictedClass == xgb_train2$ActualClass) / nrow(xgb_train2)
+```
+
+
+
+
+```{r}
+
+xgb_test2 <- predict(xgb_model2, as.matrix(testing2[1:14]), reshape = TRUE)
+xgb_test2 <- as.data.frame(xgb_test2)
+colnames(xgb_test2) <- levels(testing2$Class)
+
+xgb_test2$PredictedClass <- apply(xgb_test2, 1, function(y) colnames(xgb_test2)[which.max(y)])
+xgb_test2$ActualClass <- levels(testing2$Class)[testing2$Class]
+
+xgb2_tst_acc <- sum(xgb_test2$PredictedClass == xgb_test2$ActualClass) / nrow(xgb_test2)
+
+
+confusionMatrix(factor(xgb_train2$ActualClass), factor(xgb_train2$PredictedClass))
+confusionMatrix(factor(xgb_test2$ActualClass), factor(xgb_test2$PredictedClass))
+
+```
+
+Even though boosting is not concerend about reducing the variance and like bagging we can see that the model's variance is close to 0, meaning it has an identical fit in both sets of splits. 
+
+```{r}
+print(paste('Variance on the Training Dataset = ',xgb_tr_cm$overall['Accuracy'] -xgb2_tr_acc))
+print(paste('Variance on the Testing Dataset = ',xgb_tst_cm$overall['Accuracy'] - xgb2_tst_acc))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
